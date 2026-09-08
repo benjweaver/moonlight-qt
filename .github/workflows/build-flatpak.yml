@@ -1,0 +1,43 @@
+---
+name: Build - Flatpak
+permissions:
+  contents: read
+
+on:
+  push:
+    branches:
+      - flatpak-build
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v5
+
+      - name: Install Flatpak tooling
+        run: |
+          sudo apt update
+          sudo apt install -y flatpak flatpak-builder
+          flatpak remote-add --if-not-exists --user flathub https://flathub.org/repo/flathub.flatpakrepo
+
+      - name: Install runtime and SDK
+        run: flatpak install --user -y flathub org.kde.Platform//6.11 org.kde.Sdk//6.11
+
+      - name: Build
+        run: |
+          flatpak-builder --user --disable-rofiles-fuse --repo=repo --force-clean \
+            build packaging/flatpak/com.moonlight_stream.Moonlight.json
+
+      - name: Create bundle
+        run: |
+          flatpak build-bundle repo Moonlight-auto-display-mode.flatpak \
+            com.moonlight_stream.Moonlight
+
+      - name: Upload bundle
+        uses: actions/upload-artifact@v4
+        with:
+          name: Moonlight-Flatpak
+          path: Moonlight-auto-display-mode.flatpak
