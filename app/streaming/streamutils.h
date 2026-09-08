@@ -24,6 +24,12 @@ public:
     bool getNativeDesktopMode(int displayIndex, SDL_DisplayMode* mode, SDL_Rect* safeArea);
 
     static
+    int getRefreshRateForDesktopMode(int displayIndex, const SDL_DisplayMode* desktopMode);
+
+    static
+    int getNativeRefreshRate(int displayIndex);
+
+    static
     int getDisplayRefreshRate(SDL_Window* window);
 
     static

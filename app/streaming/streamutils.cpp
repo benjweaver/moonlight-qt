@@ -367,6 +367,49 @@ bool StreamUtils::getNativeDesktopMode(int displayIndex, SDL_DisplayMode* mode, 
     return true;
 }
 
+int StreamUtils::getRefreshRateForDesktopMode(int displayIndex, const SDL_DisplayMode* desktopMode)
+{
+    SDL_assert(SDL_WasInit(SDL_INIT_VIDEO));
+
+    // Start at desktop mode and work our way up
+    SDL_DisplayMode bestMode = *desktopMode;
+    int numDisplayModes = SDL_GetNumDisplayModes(displayIndex);
+    for (int i = 0; i < numDisplayModes; i++) {
+        SDL_DisplayMode mode;
+        if (SDL_GetDisplayMode(displayIndex, i, &mode) == 0) {
+            if (mode.w == desktopMode->w && mode.h == desktopMode->h) {
+                if (mode.refresh_rate > bestMode.refresh_rate) {
+                    bestMode = mode;
+                }
+            }
+        }
+    }
+
+    // Try to normalize values around our our standard refresh rates.
+    // Some displays/OSes report values that are slightly off.
+    if (bestMode.refresh_rate >= 58 && bestMode.refresh_rate <= 62) {
+        return 60;
+    }
+    else if (bestMode.refresh_rate >= 28 && bestMode.refresh_rate <= 32) {
+        return 30;
+    }
+    else {
+        return bestMode.refresh_rate;
+    }
+}
+
+int StreamUtils::getNativeRefreshRate(int displayIndex)
+{
+    SDL_DisplayMode desktopMode;
+    SDL_Rect safeArea;
+
+    if (!getNativeDesktopMode(displayIndex, &desktopMode, &safeArea)) {
+        return 0;
+    }
+
+    return getRefreshRateForDesktopMode(displayIndex, &desktopMode);
+}
+
 int StreamUtils::getDrmFdForWindow(SDL_Window* window, bool* mustClose)
 {
     *mustClose = false;

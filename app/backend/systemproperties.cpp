@@ -4,6 +4,8 @@
 #include <QGuiApplication>
 #include <QLibraryInfo>
 
+#include <climits>
+
 #include "streaming/session.h"
 #include "streaming/streamutils.h"
 
@@ -163,6 +165,12 @@ int SystemProperties::getRefreshRate(int displayIndex)
     return monitorRefreshRates.value(displayIndex);
 }
 
+int SystemProperties::getDisplayIndexForOrigin(int virtualX, int virtualY)
+{
+    // Returns -1 if no display starts at these virtual desktop coordinates
+    return monitorOrigins.indexOf(QPoint(virtualX, virtualY));
+}
+
 void SystemProperties::startAsyncLoad()
 {
     if (systemPropertyQueryThread) {
@@ -227,50 +235,39 @@ void SystemProperties::refreshDisplays()
     monitorNativeResolutions.clear();
     monitorSafeAreaResolutions.clear();
     monitorRefreshRates.clear();
+    monitorOrigins.clear();
 
-    SDL_DisplayMode bestMode;
     for (int displayIndex = 0; displayIndex < SDL_GetNumVideoDisplays(); displayIndex++) {
         SDL_DisplayMode desktopMode;
         SDL_Rect safeArea;
 
         if (StreamUtils::getNativeDesktopMode(displayIndex, &desktopMode, &safeArea)) {
-            if (desktopMode.w <= 8192 && desktopMode.h <= 8192) {
-                // Keep these lists compact because their QML consumers iterate until
-                // the first empty entry. Inserting by SDL display index is invalid if
-                // an earlier display was skipped (for example, a >8K virtual display).
-                monitorNativeResolutions.append(QRect(0, 0, desktopMode.w, desktopMode.h));
-                monitorSafeAreaResolutions.append(QRect(0, 0, safeArea.w, safeArea.h));
-            }
-            else {
+            if (desktopMode.w > 8192 || desktopMode.h > 8192) {
                 SDL_LogWarn(SDL_LOG_CATEGORY_APPLICATION,
                             "Skipping resolution over 8K: %dx%d",
                             desktopMode.w, desktopMode.h);
+                continue;
             }
 
-            // Start at desktop mode and work our way up
-            bestMode = desktopMode;
-            int numDisplayModes = SDL_GetNumDisplayModes(displayIndex);
-            for (int i = 0; i < numDisplayModes; i++) {
-                SDL_DisplayMode mode;
-                if (SDL_GetDisplayMode(displayIndex, i, &mode) == 0) {
-                    if (mode.w == desktopMode.w && mode.h == desktopMode.h) {
-                        if (mode.refresh_rate > bestMode.refresh_rate) {
-                            bestMode = mode;
-                        }
-                    }
-                }
-            }
+            // Keep these lists compact and appended to in lockstep, because their QML
+            // consumers iterate until the first empty entry and index all of them with
+            // the same value. Inserting by SDL display index is invalid if an earlier
+            // display was skipped (for example, a >8K virtual display).
+            monitorNativeResolutions.append(QRect(0, 0, desktopMode.w, desktopMode.h));
+            monitorSafeAreaResolutions.append(QRect(0, 0, safeArea.w, safeArea.h));
+            monitorRefreshRates.append(StreamUtils::getRefreshRateForDesktopMode(displayIndex, &desktopMode));
 
-            // Try to normalize values around our our standard refresh rates.
-            // Some displays/OSes report values that are slightly off.
-            if (bestMode.refresh_rate >= 58 && bestMode.refresh_rate <= 62) {
-                monitorRefreshRates.append(60);
-            }
-            else if (bestMode.refresh_rate >= 28 && bestMode.refresh_rate <= 32) {
-                monitorRefreshRates.append(30);
+            // Remember where this display lives on the virtual desktop, so we can
+            // match it against the display that the Qt UI is currently on.
+            SDL_Rect displayBounds;
+            if (SDL_GetDisplayBounds(displayIndex, &displayBounds) == 0) {
+                monitorOrigins.append(QPoint(displayBounds.x, displayBounds.y));
             }
             else {
-                monitorRefreshRates.append(bestMode.refresh_rate);
+                SDL_LogWarn(SDL_LOG_CATEGORY_APPLICATION,
+                            "SDL_GetDisplayBounds(%d) failed: %s",
+                            displayIndex, SDL_GetError());
+                monitorOrigins.append(QPoint(INT_MIN, INT_MIN));
             }
         }
     }

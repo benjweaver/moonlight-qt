@@ -612,8 +612,16 @@ bool Session::initialize(QQuickWindow* qtWindow)
         for (int displayIndex = 0; StreamUtils::getNativeDesktopMode(displayIndex, &desktopMode, &safeArea); displayIndex++) {
             // Check if this display has a notch (safeArea != desktopMode)
             if (desktopMode.h != safeArea.h || desktopMode.w != safeArea.w) {
+                // Automatic resolution always streams the safe area of the display,
+                // so place the video below the notch.
+                if (m_Preferences->autoResolution) {
+                    SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION,
+                                "Overriding default fullscreen mode for automatic resolution");
+                    shouldUseFullScreenSpaces = true;
+                    break;
+                }
                 // Check if we're trying to stream at the full native resolution (including notch)
-                if (m_Preferences->width == desktopMode.w && m_Preferences->height == desktopMode.h) {
+                else if (m_Preferences->width == desktopMode.w && m_Preferences->height == desktopMode.h) {
                     SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION,
                                 "Overriding default fullscreen mode for native fullscreen resolution");
                     shouldUseFullScreenSpaces = false;
@@ -658,6 +666,12 @@ bool Session::initialize(QQuickWindow* qtWindow)
     LiInitializeStreamConfiguration(&m_StreamConfig);
     m_StreamConfig.width = m_Preferences->width;
     m_StreamConfig.height = m_Preferences->height;
+    m_StreamConfig.fps = m_Preferences->fps;
+    m_StreamConfig.bitrate = m_Preferences->bitrateKbps;
+
+    // Replace the saved resolution and/or frame rate with the client display's
+    // own values if the user asked us to match it automatically
+    overrideStreamConfigForClientDisplay();
 
     int x, y, width, height;
     getWindowDimensions(x, y, width, height);
@@ -677,9 +691,6 @@ bool Session::initialize(QQuickWindow* qtWindow)
 
     LiInitializeVideoCallbacks(&m_VideoCallbacks);
     m_VideoCallbacks.setup = drSetup;
-
-    m_StreamConfig.fps = m_Preferences->fps;
-    m_StreamConfig.bitrate = m_Preferences->bitrateKbps;
 
 #ifndef STEAM_LINK
     // Opt-in to all encryption features if we detect that the platform
@@ -1315,53 +1326,121 @@ private:
     Session* m_Session;
 };
 
+void Session::overrideStreamConfigForClientDisplay()
+{
+    if (!m_Preferences->autoResolution && !m_Preferences->autoFps) {
+        return;
+    }
+
+    int displayIndex = getStreamDisplayIndex();
+
+    // Remember whether the saved bitrate is just the default for the saved display
+    // mode, so we know if we may adjust it for the display mode we end up with.
+    bool usingDefaultBitrate = m_StreamConfig.bitrate == StreamingPreferences::getDefaultBitrate(m_StreamConfig.width,
+                                                                                                 m_StreamConfig.height,
+                                                                                                 m_StreamConfig.fps,
+                                                                                                 m_Preferences->enableYUV444);
+
+    if (m_Preferences->autoResolution) {
+        SDL_DisplayMode desktopMode;
+        SDL_Rect safeArea;
+
+        if (StreamUtils::getNativeDesktopMode(displayIndex, &desktopMode, &safeArea)) {
+            // Use the safe area rather than the full native resolution, so we don't
+            // render video underneath a notch on displays that have one. They are
+            // identical on displays without a notch.
+            m_StreamConfig.width = safeArea.w;
+            m_StreamConfig.height = safeArea.h;
+
+            SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION,
+                        "Matching resolution of display %d: %dx%d",
+                        displayIndex, m_StreamConfig.width, m_StreamConfig.height);
+        }
+        else {
+            SDL_LogWarn(SDL_LOG_CATEGORY_APPLICATION,
+                        "Unable to detect resolution of display %d. Using %dx%d.",
+                        displayIndex, m_StreamConfig.width, m_StreamConfig.height);
+        }
+    }
+
+    if (m_Preferences->autoFps) {
+        int refreshRate = StreamUtils::getNativeRefreshRate(displayIndex);
+        if (refreshRate != 0) {
+            m_StreamConfig.fps = refreshRate;
+
+            SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION,
+                        "Matching refresh rate of display %d: %d FPS",
+                        displayIndex, m_StreamConfig.fps);
+        }
+        else {
+            SDL_LogWarn(SDL_LOG_CATEGORY_APPLICATION,
+                        "Unable to detect refresh rate of display %d. Using %d FPS.",
+                        displayIndex, m_StreamConfig.fps);
+        }
+    }
+
+    // The default bitrate was computed for the saved resolution and frame rate, so it
+    // needs to be recalculated for the display mode we actually ended up with. If the
+    // user picked their own bitrate, we assume they really wanted that value.
+    if (m_Preferences->autoAdjustBitrate && usingDefaultBitrate) {
+        m_StreamConfig.bitrate = StreamingPreferences::getDefaultBitrate(m_StreamConfig.width,
+                                                                         m_StreamConfig.height,
+                                                                         m_StreamConfig.fps,
+                                                                         m_Preferences->enableYUV444);
+    }
+}
+
+int Session::getStreamDisplayIndex()
+{
+    if (m_Window != nullptr) {
+        int displayIndex = SDL_GetWindowDisplayIndex(m_Window);
+        SDL_assert(displayIndex >= 0);
+        return displayIndex >= 0 ? displayIndex : 0;
+    }
+
+    // We will create our window on the same display that Qt's UI
+    // was being displayed on.
+    Q_ASSERT(m_QtWindow != nullptr);
+    if (m_QtWindow != nullptr) {
+        QScreen* screen = m_QtWindow->screen();
+        if (screen != nullptr) {
+            QRect displayRect = screen->geometry();
+
+            SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION,
+                        "Qt UI screen is at (%d,%d)",
+                        displayRect.x(), displayRect.y());
+            for (int i = 0; i < SDL_GetNumVideoDisplays(); i++) {
+                SDL_Rect displayBounds;
+
+                if (SDL_GetDisplayBounds(i, &displayBounds) == 0) {
+                    if (displayBounds.x == displayRect.x() &&
+                        displayBounds.y == displayRect.y()) {
+                        SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION,
+                                    "SDL found matching display %d",
+                                    i);
+                        return i;
+                    }
+                }
+                else {
+                    SDL_LogWarn(SDL_LOG_CATEGORY_APPLICATION,
+                                "SDL_GetDisplayBounds(%d) failed: %s",
+                                i, SDL_GetError());
+                }
+            }
+        }
+        else {
+            SDL_LogWarn(SDL_LOG_CATEGORY_APPLICATION,
+                        "Qt window is not associated with a QScreen!");
+        }
+    }
+
+    return 0;
+}
+
 void Session::getWindowDimensions(int& x, int& y,
                                   int& width, int& height)
 {
-    int displayIndex = 0;
-
-    if (m_Window != nullptr) {
-        displayIndex = SDL_GetWindowDisplayIndex(m_Window);
-        SDL_assert(displayIndex >= 0);
-    }
-    // Create our window on the same display that Qt's UI
-    // was being displayed on.
-    else {
-        Q_ASSERT(m_QtWindow != nullptr);
-        if (m_QtWindow != nullptr) {
-            QScreen* screen = m_QtWindow->screen();
-            if (screen != nullptr) {
-                QRect displayRect = screen->geometry();
-
-                SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION,
-                            "Qt UI screen is at (%d,%d)",
-                            displayRect.x(), displayRect.y());
-                for (int i = 0; i < SDL_GetNumVideoDisplays(); i++) {
-                    SDL_Rect displayBounds;
-
-                    if (SDL_GetDisplayBounds(i, &displayBounds) == 0) {
-                        if (displayBounds.x == displayRect.x() &&
-                            displayBounds.y == displayRect.y()) {
-                            SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION,
-                                        "SDL found matching display %d",
-                                        i);
-                            displayIndex = i;
-                            break;
-                        }
-                    }
-                    else {
-                        SDL_LogWarn(SDL_LOG_CATEGORY_APPLICATION,
-                                    "SDL_GetDisplayBounds(%d) failed: %s",
-                                    i, SDL_GetError());
-                    }
-                }
-            }
-            else {
-                SDL_LogWarn(SDL_LOG_CATEGORY_APPLICATION,
-                            "Qt window is not associated with a QScreen!");
-            }
-        }
-    }
+    int displayIndex = getStreamDisplayIndex();
 
     SDL_Rect usableBounds;
     if (SDL_GetDisplayUsableBounds(displayIndex, &usableBounds) == 0) {

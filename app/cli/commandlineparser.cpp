@@ -346,8 +346,10 @@ void StreamCommandLineParser::parse(const QStringList &args, StreamingPreference
     parser.addFlagOption("1440", "2560x1440 resolution");
     parser.addFlagOption("4K", "3840x2160 resolution");
     parser.addValueOption("resolution", "custom <width>x<height> resolution");
+    parser.addToggleOption("auto-resolution", "matching the client display's resolution");
     parser.addToggleOption("vsync", "V-Sync");
     parser.addValueOption("fps", "FPS");
+    parser.addToggleOption("auto-fps", "matching the client display's frame rate");
     parser.addValueOption("bitrate", "bitrate in Kbps");
     parser.addValueOption("packet-size", "video packet size");
     parser.addChoiceOption("display-mode", "display mode", m_WindowModeMap.keys());
@@ -401,7 +403,13 @@ void StreamCommandLineParser::parse(const QStringList &args, StreamingPreference
             preferences->width  = resolution.first;
             preferences->height = resolution.second;
         }
+
+        // An explicit resolution overrides matching the client display
+        preferences->autoResolution = false;
     }
+
+    // Resolve --auto-resolution and --no-auto-resolution options
+    preferences->autoResolution = parser.getToggleOptionValue("auto-resolution", preferences->autoResolution);
 
     // Resolve --fps option
     if (parser.isSet("fps")) {
@@ -409,7 +417,13 @@ void StreamCommandLineParser::parse(const QStringList &args, StreamingPreference
         if (!inRange(preferences->fps, 10, 480)) {
             fprintf(stderr, "Warning: FPS is out of the supported range (10 - 480 FPS). Performance may suffer!\n");
         }
+
+        // An explicit frame rate overrides matching the client display
+        preferences->autoFps = false;
     }
+
+    // Resolve --auto-fps and --no-auto-fps options
+    preferences->autoFps = parser.getToggleOptionValue("auto-fps", preferences->autoFps);
 
     // Resolve --bitrate option
     if (parser.isSet("bitrate")) {

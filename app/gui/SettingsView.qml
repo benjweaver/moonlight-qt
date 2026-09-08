@@ -1,7 +1,7 @@
 import QtQuick 2.9
 import QtQuick.Controls 2.2
 import QtQuick.Layouts 1.2
-import QtQuick.Window 2.2
+import QtQuick.Window 2.3
 
 import StreamingPreferences 1.0
 import ComputerManager 1.0
@@ -24,6 +24,13 @@ Flickable {
             left: parent.right
             leftMargin: -10
         }
+    }
+
+    // Returns the display index (as used by SystemProperties) of the display
+    // that this window is currently on, falling back to the first display.
+    function currentDisplayIndex() {
+        var displayIndex = SystemProperties.getDisplayIndexForOrigin(Screen.virtualX, Screen.virtualY)
+        return displayIndex >= 0 ? displayIndex : 0
     }
 
     function isChildOfFlickable(item) {
@@ -126,6 +133,15 @@ Flickable {
                     wrapMode: Text.Wrap
                 }
 
+                Label {
+                    width: parent.width
+                    id: autoDisplayModeDesc
+                    visible: StreamingPreferences.autoResolution || StreamingPreferences.autoFps
+                    text: qsTr("Automatic values are detected when the stream starts, so connecting a different display doesn't require changing this setting.")
+                    font.pointSize: 9
+                    wrapMode: Text.Wrap
+                }
+
                 Row {
                     spacing: 5
                     width: parent.width
@@ -157,7 +173,8 @@ Flickable {
                                                                "text": friendlyNamePrefix+" ("+rect.width+"x"+rect.height+")",
                                                                "video_width": ""+rect.width,
                                                                "video_height": ""+rect.height,
-                                                               "is_custom": false
+                                                               "is_custom": false,
+                                                               "is_auto": false
                                                            })
                             }
                         }
@@ -197,19 +214,37 @@ Flickable {
                                 }
                             }
 
+                            // Add the option to follow whichever display we're streaming on.
+                            // It always goes first, so the automatic entry has a stable index.
+                            resolutionListModel.insert(0,
+                                                       {
+                                                           "text": qsTr("Automatic (Match Client Display)"),
+                                                           "video_width": "0",
+                                                           "video_height": "0",
+                                                           "is_custom": false,
+                                                           "is_auto": true
+                                                       })
+
                             // load the saved width/height, and iterate through the ComboBox until a match is found
                             // and set it to that index.
                             var saved_width = StreamingPreferences.width
                             var saved_height = StreamingPreferences.height
                             var index_set = false
-                            for (var i = 0; i < resolutionListModel.count; i++) {
-                                var el_width = parseInt(resolutionListModel.get(i).video_width);
-                                var el_height = parseInt(resolutionListModel.get(i).video_height);
+                            if (StreamingPreferences.autoResolution) {
+                                // The automatic entry is always first
+                                currentIndex = 0
+                                index_set = true
+                            }
+                            else {
+                                for (var i = 0; i < resolutionListModel.count; i++) {
+                                    var el_width = parseInt(resolutionListModel.get(i).video_width);
+                                    var el_height = parseInt(resolutionListModel.get(i).video_height);
 
-                                if (saved_width === el_width && saved_height === el_height) {
-                                    currentIndex = i
-                                    index_set = true
-                                    break
+                                    if (saved_width === el_width && saved_height === el_height) {
+                                        currentIndex = i
+                                        index_set = true
+                                        break
+                                    }
                                 }
                             }
 
@@ -219,7 +254,8 @@ Flickable {
                                                                "text": qsTr("Custom")+" ("+StreamingPreferences.width+"x"+StreamingPreferences.height+")",
                                                                "video_width": ""+StreamingPreferences.width,
                                                                "video_height": ""+StreamingPreferences.height,
-                                                               "is_custom": true
+                                                               "is_custom": true,
+                                                               "is_auto": false
                                                            })
                                 currentIndex = resolutionListModel.count - 1
                             }
@@ -228,7 +264,8 @@ Flickable {
                                                                "text": qsTr("Custom"),
                                                                "video_width": "",
                                                                "video_height": "",
-                                                               "is_custom": true
+                                                               "is_custom": true,
+                                                               "is_auto": false
                                                            })
                             }
 
@@ -251,30 +288,53 @@ Flickable {
                                 video_width: "1280"
                                 video_height: "720"
                                 is_custom: false
+                                is_auto: false
                             }
                             ListElement {
                                 text: qsTr("1080p")
                                 video_width: "1920"
                                 video_height: "1080"
                                 is_custom: false
+                                is_auto: false
                             }
                             ListElement {
                                 text: qsTr("1440p")
                                 video_width: "2560"
                                 video_height: "1440"
                                 is_custom: false
+                                is_auto: false
                             }
                             ListElement {
                                 text: qsTr("4K")
                                 video_width: "3840"
                                 video_height: "2160"
                                 is_custom: false
+                                is_auto: false
                             }
                         }
 
                         function updateBitrateForSelection() {
-                            var selectedWidth = parseInt(resolutionListModel.get(currentIndex).video_width)
-                            var selectedHeight = parseInt(resolutionListModel.get(currentIndex).video_height)
+                            var selectedEntry = resolutionListModel.get(currentIndex)
+                            var selectedWidth = parseInt(selectedEntry.video_width)
+                            var selectedHeight = parseInt(selectedEntry.video_height)
+
+                            StreamingPreferences.autoResolution = selectedEntry.is_auto
+
+                            if (selectedEntry.is_auto) {
+                                // The stream will match whichever display it ends up on, but save the
+                                // resolution of the display we're on now. It is the value we fall back
+                                // to if detection fails, and what the default bitrate is based on until
+                                // the stream starts.
+                                var currentRes = SystemProperties.getSafeAreaResolution(settingsPage.currentDisplayIndex())
+                                if (currentRes.width === 0 || currentRes.height === 0) {
+                                    // No usable display data, so leave the saved resolution alone
+                                    lastIndexValue = currentIndex
+                                    return
+                                }
+
+                                selectedWidth = currentRes.width
+                                selectedHeight = currentRes.height
+                            }
 
                             // Only modify the bitrate if the values actually changed
                             if (StreamingPreferences.width !== selectedWidth || StreamingPreferences.height !== selectedHeight) {
@@ -444,8 +504,25 @@ Flickable {
                         property int lastIndexValue
 
                         function updateBitrateForSelection() {
+                            var selectedEntry = model.get(fpsComboBox.currentIndex)
+                            var selectedFps = parseInt(selectedEntry.video_fps)
+
+                            StreamingPreferences.autoFps = selectedEntry.is_auto
+
+                            if (selectedEntry.is_auto) {
+                                // The stream will match whichever display it ends up on, but save the
+                                // refresh rate of the display we're on now. It is the value we fall back
+                                // to if detection fails, and what the default bitrate is based on until
+                                // the stream starts.
+                                selectedFps = SystemProperties.getRefreshRate(settingsPage.currentDisplayIndex())
+                                if (selectedFps === 0) {
+                                    // No usable display data, so leave the saved frame rate alone
+                                    lastIndexValue = currentIndex
+                                    return
+                                }
+                            }
+
                             // Only modify the bitrate if the values actually changed
-                            var selectedFps = parseInt(model.get(fpsComboBox.currentIndex).video_fps)
                             if (StreamingPreferences.fps !== selectedFps) {
                                 StreamingPreferences.fps = selectedFps
 
@@ -583,7 +660,8 @@ Flickable {
                                                     {
                                                         "text": description,
                                                         "video_fps": ""+refreshRate,
-                                                        "is_custom": custom
+                                                        "is_custom": custom,
+                                                        "is_auto": false
                                                     })
                             }
 
@@ -604,16 +682,41 @@ Flickable {
                                 addRefreshRateOrdered(fpsListModel, refreshRate, qsTr("%1 FPS").arg(refreshRate), false)
                             }
 
+                            // Add the option to follow whichever display we're streaming on.
+                            // It always goes first, so the automatic entry has a stable index.
+                            // This function runs again on retranslation, so update it in place
+                            // if we've already added it.
+                            var autoText = qsTr("Automatic (Match Client Display)")
+                            if (fpsListModel.count > 0 && fpsListModel.get(0).is_auto) {
+                                fpsListModel.setProperty(0, "text", autoText)
+                            }
+                            else {
+                                fpsListModel.insert(0,
+                                                    {
+                                                        "text": autoText,
+                                                        "video_fps": "0",
+                                                        "is_custom": false,
+                                                        "is_auto": true
+                                                    })
+                            }
+
                             var saved_fps = StreamingPreferences.fps
                             var found = false
-                            for (var i = 0; i < model.count; i++) {
-                                var el_fps = parseInt(model.get(i).video_fps);
+                            if (StreamingPreferences.autoFps) {
+                                // The automatic entry is always first
+                                currentIndex = 0
+                                found = true
+                            }
+                            else {
+                                for (var i = 0; i < model.count; i++) {
+                                    var el_fps = parseInt(model.get(i).video_fps);
 
-                                // Look for a matching frame rate
-                                if (saved_fps === el_fps) {
-                                    currentIndex = i
-                                    found = true
-                                    break
+                                    // Look for a matching frame rate
+                                    if (saved_fps === el_fps) {
+                                        currentIndex = i
+                                        found = true
+                                        break
+                                    }
                                 }
                             }
 
@@ -643,11 +746,13 @@ Flickable {
                                 text: qsTr("30 FPS")
                                 video_fps: "30"
                                 is_custom: false
+                                is_auto: false
                             }
                             ListElement {
                                 text: qsTr("60 FPS")
                                 video_fps: "60"
                                 is_custom: false
+                                is_auto: false
                             }
                         }
 
