@@ -48,7 +48,8 @@ private:
 
 SystemProperties::SystemProperties()
 {
-    versionString = QString(VERSION_STR);
+    // Identify this custom build in the version shown on the settings page
+    versionString = QString(VERSION_STR "-auto-display-mode");
     hasDesktopEnvironment = WMUtils::isRunningDesktopEnvironment();
     isRunningWayland = WMUtils::isRunningWayland();
     isRunningXWayland = isRunningWayland && QGuiApplication::platformName() == "xcb";
