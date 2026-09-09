@@ -14,6 +14,11 @@
 #include <Windows.h>
 #endif
 
+// Identifies this fork's builds in the version shown on the settings page.
+// Bump the trailing number for every build that gets shared or released, so
+// it's unambiguous which one someone is running.
+#define CUSTOM_BUILD_TAG "auto-display-mode-bjw-0.4"
+
 class SystemPropertyQueryThread : public QThread
 {
 public:
@@ -48,7 +53,7 @@ private:
 
 SystemProperties::SystemProperties()
 {
-    versionString = QString(VERSION_STR);
+    versionString = QString(VERSION_STR "-" CUSTOM_BUILD_TAG);
     hasDesktopEnvironment = WMUtils::isRunningDesktopEnvironment();
     isRunningWayland = WMUtils::isRunningWayland();
     isRunningXWayland = isRunningWayland && QGuiApplication::platformName() == "xcb";
