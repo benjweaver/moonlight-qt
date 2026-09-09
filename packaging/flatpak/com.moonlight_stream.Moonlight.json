@@ -235,7 +235,7 @@
                 {
                     "type": "git",
                     "url": "https://github.com/benjweaver/moonlight-qt.git",
-                    "branch": "auto-display-mode",
+                    "commit": "eef63e3b7371f7c706a95b335150a04753755c9b",
                     "disable-shallow-clone": true
                 }
             ]
