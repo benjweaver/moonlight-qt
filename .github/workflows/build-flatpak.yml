@@ -1,0 +1,57 @@
+---
+name: Build - Flatpak
+permissions:
+  contents: read
+
+on:
+  workflow_call:
+    inputs:
+      ci_version:
+        required: true
+        type: string
+
+jobs:
+  build:
+    env:
+      CI_VERSION: ${{ inputs.ci_version }}
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v5
+
+      - name: Install Flatpak tooling
+        run: |
+          sudo apt update
+          sudo apt install -y flatpak flatpak-builder
+          flatpak remote-add --if-not-exists --user flathub https://flathub.org/repo/flathub.flatpakrepo
+
+      - name: Install runtime and SDK
+        run: flatpak install --user -y flathub org.kde.Platform//6.11 org.kde.Sdk//6.11
+
+      - name: Build the revision being released
+        run: |
+          python3 - "${GITHUB_SHA}" <<'EOF'
+          import json, collections, sys
+          p = 'packaging/flatpak/com.moonlight_stream.Moonlight.json'
+          m = json.load(open(p), object_pairs_hook=collections.OrderedDict)
+          for mod in m['modules']:
+              if isinstance(mod, dict) and mod['name'] == 'moonlight':
+                  mod['sources'][0]['commit'] = sys.argv[1]
+          open(p, 'w').write(json.dumps(m, indent=4) + "\n")
+          EOF
+          flatpak-builder --user --disable-rofiles-fuse --repo=repo --force-clean \
+            build packaging/flatpak/com.moonlight_stream.Moonlight.json
+
+      - name: Create bundle
+        run: |
+          flatpak build-bundle repo Moonlight-${CI_VERSION}-x86_64.flatpak \
+            com.moonlight_stream.Moonlight
+
+      - name: Upload bundle
+        uses: actions/upload-artifact@v6
+        with:
+          name: Moonlight-Flatpak-${{ env.CI_VERSION }}
+          path: Moonlight-${{ env.CI_VERSION }}-x86_64.flatpak
+          compression-level: 0
+          if-no-files-found: error
