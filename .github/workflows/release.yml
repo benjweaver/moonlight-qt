@@ -1,0 +1,68 @@
+---
+name: Release
+permissions:
+  contents: read
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+jobs:
+  appimage:
+    uses: ./.github/workflows/build-appimage.yml
+    with:
+      ci_version: ${{ github.ref_name }}
+
+  flatpak:
+    uses: ./.github/workflows/build-flatpak.yml
+    with:
+      ci_version: ${{ github.ref_name }}
+
+  publish:
+    needs: [appimage, flatpak]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v5
+
+      - name: Download build artifacts
+        uses: actions/download-artifact@v6
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: Write release notes
+        run: |
+          cat > notes.md <<EOF
+          Unofficial build of [moonlight-qt](https://github.com/moonlight-stream/moonlight-qt),
+          built from upstream \`master\` at \`${GITHUB_SHA::10}\` plus the automatic
+          display mode patch. Not affiliated with the Moonlight project - please do not
+          report issues with these builds to them.
+
+          ### Install
+
+          **Flatpak** (updates through Discover once installed):
+          \`\`\`
+          flatpak install --user ./Moonlight-${GITHUB_REF_NAME}-x86_64.flatpak
+          \`\`\`
+
+          **AppImage** (self-contained, no install):
+          \`\`\`
+          chmod +x Moonlight-${GITHUB_REF_NAME}-x86_64.AppImage
+          ./Moonlight-${GITHUB_REF_NAME}-x86_64.AppImage
+          \`\`\`
+          EOF
+
+      - name: Publish release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          find dist -type f -print
+          gh release create "${GITHUB_REF_NAME}" \
+            --title "${GITHUB_REF_NAME}" \
+            --notes-file notes.md \
+            $(find dist -type f | sort)
