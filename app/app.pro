@@ -580,3 +580,8 @@ macx {
 
 VERSION = "$$cat(version.txt)"
 DEFINES += VERSION_STR=\\\"$$cat(version.txt)\\\"
+
+# Identifies this fork's builds in the version shown on the settings page.
+# Bump fork-version.txt for every build that gets shared or released, so it's
+# unambiguous which one someone is running. The release tag matches it.
+DEFINES += CUSTOM_BUILD_TAG=\\\"$$cat(fork-version.txt)\\\"
