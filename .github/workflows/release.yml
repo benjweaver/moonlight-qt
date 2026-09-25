@@ -19,8 +19,18 @@ jobs:
     with:
       ci_version: ${{ github.ref_name }}
 
+  steamlink:
+    uses: ./.github/workflows/build-steamlink.yml
+    with:
+      ci_version: ${{ github.ref_name }}
+
+  win-mac:
+    uses: ./.github/workflows/build-win-mac.yml
+    with:
+      ci_version: ${{ github.ref_name }}
+
   publish:
-    needs: [appimage, flatpak]
+    needs: [appimage, flatpak, steamlink, win-mac]
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -33,7 +43,6 @@ jobs:
         uses: actions/download-artifact@v6
         with:
           path: dist
-          merge-multiple: true
 
       - name: Write release notes
         run: |
@@ -55,6 +64,13 @@ jobs:
           chmod +x Moonlight-${GITHUB_REF_NAME}-x86_64.AppImage
           ./Moonlight-${GITHUB_REF_NAME}-x86_64.AppImage
           \`\`\`
+
+          Windows, macOS and Steam Link builds are also attached.
+
+          > The Windows and macOS builds are **unsigned**. Windows SmartScreen will
+          > warn about an unrecognised app, and macOS Gatekeeper will refuse to open
+          > the app until you allow it under Settings > Privacy & Security. Signing
+          > these needs paid developer certificates, which this fork doesn't have.
           EOF
 
       - name: Publish release
@@ -65,4 +81,4 @@ jobs:
           gh release create "${GITHUB_REF_NAME}" \
             --title "${GITHUB_REF_NAME}" \
             --notes-file notes.md \
-            $(find dist -type f | sort)
+            $(find dist -type f -not -path 'dist/zDevDbgSyms*' | sort)
