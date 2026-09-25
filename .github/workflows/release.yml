@@ -44,6 +44,27 @@ jobs:
         with:
           path: dist
 
+      - name: Package the platform builds
+        run: |
+          TAG="${GITHUB_REF_NAME}"
+          mkdir -p assets
+
+          # Already distributable, just collect them
+          cp dist/Moonlight-LinuxAppImage-"$TAG"/*.AppImage assets/
+          cp dist/Moonlight-Flatpak-"$TAG"/*.flatpak assets/
+          cp dist/Moonlight-macOS-"$TAG"/*.dmg assets/
+
+          # The Windows and Steam Link jobs upload unpacked build trees, so
+          # zip each one into a single asset
+          for arch in x64 arm64; do
+            (cd dist/Moonlight-Windows-"$arch"-"$TAG" && zip -qr - .) \
+              > assets/MoonlightPortable-"$arch"-"$TAG".zip
+          done
+          (cd dist/Moonlight-SteamLink-"$TAG" && zip -qr - .) \
+            > assets/Moonlight-SteamLink-"$TAG".zip
+
+          ls -la assets/
+
       - name: Write release notes
         run: |
           cat > notes.md <<EOF
@@ -65,7 +86,7 @@ jobs:
           ./Moonlight-${GITHUB_REF_NAME}-x86_64.AppImage
           \`\`\`
 
-          Windows, macOS and Steam Link builds are also attached.
+          Windows (portable x64/arm64), macOS and Steam Link builds are also attached.
 
           > The Windows and macOS builds are **unsigned**. Windows SmartScreen will
           > warn about an unrecognised app, and macOS Gatekeeper will refuse to open
@@ -77,8 +98,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          find dist -type f -print
           gh release create "${GITHUB_REF_NAME}" \
             --title "${GITHUB_REF_NAME}" \
             --notes-file notes.md \
-            $(find dist -type f -not -path 'dist/zDevDbgSyms*' | sort)
+            assets/*
